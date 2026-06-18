@@ -22,14 +22,11 @@ namespace ShapeDatTorrent.ConsoleApp.UI
         private string _path;
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public string Path {
-            get { return _path; }
-            set { _path = value; UpdateFilepath(); }
+            get { return PathTB.Text; }
+            set { PathTB.Text = value; }
         }
 
-        private void UpdateFilepath()
-        {
-            PathTB.Text = Path; 
-        }
+
 
         [Category("Appearance")]
         [Description("The text to display in the File/Folder Dialog window.")]
@@ -66,7 +63,6 @@ namespace ShapeDatTorrent.ConsoleApp.UI
                 if (result != DialogResult.OK) return;
 
                 Path = openFileDialog.FileName;
-                PathTB.Text = Path;
             }
             else if (Mode == FileBrowserMode.Folder)
             {
@@ -77,8 +73,12 @@ namespace ShapeDatTorrent.ConsoleApp.UI
                 if (result != DialogResult.OK) return;
 
                 Path = dialog.SelectedPath;
-                PathTB.Text = Path;
             }
+        }
+
+        private void ClearBT_Click(object sender, EventArgs e)
+        {
+            Path = String.Empty;
         }
     }
 }

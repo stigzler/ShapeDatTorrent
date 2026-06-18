@@ -1,5 +1,7 @@
 ﻿using BencodeNET.Parsing;
 using BencodeNET.Torrents;
+using Microsoft.VisualBasic;
+using ShapeDatTorrent.Core.DTOs;
 using ShapeDatTorrent.Core.Models;
 using System;
 using System.Collections.Generic;
@@ -18,15 +20,16 @@ namespace ShapeDatTorrent.Core.Engines
         private Dictionary<string, List<AuditEntry>> _looseRegistry = new Dictionary<string, List<AuditEntry>>(StringComparer.OrdinalIgnoreCase);
         private Dictionary<string, AuditEntry> _strictRegistry = new Dictionary<string, AuditEntry>(StringComparer.OrdinalIgnoreCase);
 
+    //    public void Process(string torrentPath, string keptDatPath, string removedDatPath,
+    //long targetBytes, List<string> regionsList, string outputDir, bool strict)
 
-        public void Process(string torrentPath, string keptDatPath, string removedDatPath,
-            long targetBytes, List<string> regionsList, string outputDir, bool strict)
+        public void Process(ProcessingRequest request)
         {
             var parser = new BencodeParser();
-            Log("[..] Parsing master torrent metadata...");
+            Log($"[{DateTime.Now.ToString("dd.MM.yy HH:mm.ss")}] Parsing master torrent metadata...", ConsoleColor.Green);
 
             Torrent masterTorrent;
-            try { masterTorrent = parser.Parse<Torrent>(torrentPath); }
+            try { masterTorrent = parser.Parse<Torrent>(request.TorrentPath); }
             catch (Exception)
             {
                 Log("[ERROR] Failed to parse torrent metadata.", ConsoleColor.Red);
@@ -36,12 +39,16 @@ namespace ShapeDatTorrent.Core.Engines
             if (masterTorrent.Files == null) return;
             int totalOriginalFiles = masterTorrent.Files.Count;
 
-            if (!string.IsNullOrEmpty(keptDatPath))
-            {
-                string mode = string.IsNullOrEmpty(removedDatPath) ? "Single DAT Mode" : "Dual DAT Mode";
-                Log($"[MODE] DAT-Driven Curation Active ({mode}) | Strict Mode: {strict}", ConsoleColor.Green);
+            // ====================================================================
+            // Mode 1: Filter by Dat
 
-                BuildAuditRegistry(keptDatPath, removedDatPath);
+            if (!string.IsNullOrEmpty(request.KeptDatPath))
+            {
+                string mode = string.IsNullOrEmpty(request.RemovedDatPath) ? "Just Filter" : "Also use Excluded";
+                Log($"[MODE] DAT Filter Active ({mode}) | Strict Mode: {request.Strict}", ConsoleColor.Cyan);
+                Log($"[PATH] Target Output Folder: \"{request.OutputDir}\"", ConsoleColor.Gray);
+
+                BuildAuditRegistry(request.KeptDatPath, request.RemovedDatPath);
                 List<MultiFileInfo> selectedFiles = new List<MultiFileInfo>();
                 var auditEntries = new List<(string Type, string Filename, string Reason)>();
 
@@ -53,7 +60,7 @@ namespace ShapeDatTorrent.Core.Engines
                     string nameKey = Path.GetFileNameWithoutExtension(filename);
                     AuditEntry match = null;
 
-                    if (strict)
+                    if (request.Strict)
                     {
                         // Strict Match: Look in the Exact Name registry
                         if (_strictRegistry.TryGetValue(nameKey, out var exactMatch))
@@ -64,7 +71,7 @@ namespace ShapeDatTorrent.Core.Engines
                         // Loose Match: Look in the Cleaned Name registry
                         string cleanName = GetCleanName(nameKey);
                         if (_looseRegistry.TryGetValue(cleanName, out var candidates))
-                            match = FindBestMatch(nameKey, candidates, regionsList);
+                            match = FindBestMatch(nameKey, candidates, Models.TorrentConstants.DefaultRegions);
                     }
 
                     if (match != null)
@@ -79,13 +86,13 @@ namespace ShapeDatTorrent.Core.Engines
                         {
                             removalCount++;
                             string cleanReason = match.Reason.Replace("Remove reason:", "", StringComparison.OrdinalIgnoreCase).Trim();
-                            auditEntries.Add(("EXCLUDED", filename, $"Retool: Remove reason: {cleanReason}"));
+                            auditEntries.Add(("EXCLUDED", filename, $"Filter dat removal reason: {cleanReason}"));
                         }
                     }
                     else
                     {
                         orphanCount++;
-                        string reasonText = string.IsNullOrEmpty(removedDatPath) ? "Retool: Not in Dat. No Retool Removed dat sent." : "Orphan (Not in any DAT)";
+                        string reasonText = string.IsNullOrEmpty(request.RemovedDatPath) ? "Not in Filter .dat. No Excluded .dat sent." : "Orphan (Not in any DAT)";
                         auditEntries.Add(("ORPHAN", filename, reasonText));
                     }
                 }
@@ -97,29 +104,31 @@ namespace ShapeDatTorrent.Core.Engines
                     .ThenBy(x => x.Filename)
                     .Select(x => $"{x.Type} | File: {x.Filename} | {x.Reason}");
 
-                string logPath = Path.Combine(outputDir, "ShapeDatTorrent.log");
+                string logPath = Path.Combine(request.OutputDir, "ShapeDatTorrent.log");
                 File.WriteAllLines(logPath, finalLogLines);
-                Log($"[REPORT] Audit log written to: {logPath}", ConsoleColor.DarkGray);
+                Log($"[REPORT] Audit log written to: {logPath}", ConsoleColor.Gray);
 
                 if (selectedFiles.Count > 0)
-                    WriteFlatBatches(masterTorrent, selectedFiles, targetBytes, torrentPath, totalOriginalFiles, outputDir, true);
+                    WriteFlatBatches(masterTorrent, selectedFiles, request.TargetBytes, request.TorrentPath, totalOriginalFiles, request.OutputDir, true);
                 else
                     Log("[ERROR] Output halted: Zero files qualified.", ConsoleColor.Red);
             }
 
-            // Mode 2: Pure Swarm Balancer
+            // ====================================================================
+            // Mode 2: Simple Split
             else
             {
-                Log($"[MODE] Pure Swarm Balancing Engine Active!", ConsoleColor.Cyan);
-                Log($"[PATH] Target Output Folder: \"{outputDir}\"\n", ConsoleColor.White);
+                Log($"[MODE] Simple .torrent split", ConsoleColor.Cyan);
+                Log($"[PATH] Target Output Folder: \"{request.OutputDir}\"", ConsoleColor.Gray);
+                Log($"[STATS] All files included given no .dat file. Included: {totalOriginalFiles}", ConsoleColor.Yellow);
 
-                var regionalBuckets = regionsList.ToDictionary(r => r, r => new List<MultiFileInfo>(), StringComparer.OrdinalIgnoreCase);
+                var regionalBuckets = Models.TorrentConstants.DefaultRegions.ToDictionary(r => r, r => new List<MultiFileInfo>(), StringComparer.OrdinalIgnoreCase);
                 var unassignedFiles = new List<MultiFileInfo>();
 
                 foreach (var file in masterTorrent.Files)
                 {
                     string filename = file.Path.LastOrDefault() ?? "";
-                    string matchedRegion = regionsList.FirstOrDefault(r => Regex.IsMatch(filename, @"\(" + Regex.Escape(r) + @"(\)|,)", RegexOptions.IgnoreCase));
+                    string matchedRegion = TorrentConstants.DefaultRegions.FirstOrDefault(r => Regex.IsMatch(filename, @"\(" + Regex.Escape(r) + @"(\)|,)", RegexOptions.IgnoreCase));
 
                     if (matchedRegion != null) regionalBuckets[matchedRegion].Add(file);
                     else unassignedFiles.Add(file);
@@ -127,7 +136,7 @@ namespace ShapeDatTorrent.Core.Engines
 
                 if (unassignedFiles.Count > 0)
                 {
-                    Log($"\n[WARNING] {unassignedFiles.Count} file(s) failed categorization.", ConsoleColor.Red);
+                    Log($"\n[WARNING] {unassignedFiles.Count} file(s) failed categorization by region.", ConsoleColor.Red);
                     if (!regionalBuckets.ContainsKey("Unknown")) regionalBuckets["Unknown"] = new List<MultiFileInfo>();
                     regionalBuckets["Unknown"].AddRange(unassignedFiles);
                 }
@@ -143,18 +152,20 @@ namespace ShapeDatTorrent.Core.Engines
 
                 foreach (var region in activeRegions)
                 {
-                    if (region.TotalBytes > targetBytes)
+                    if (region.TotalBytes > request.TargetBytes)
                     {
                         if (currentBatchFiles.Count > 0)
                         {
-                            SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, GetBestBatchSuffix(currentBatchRegions), totalOriginalFiles, outputDir);
+                            SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, request.TorrentPath,
+                                $"Split-{GetBestBatchSuffix(currentBatchRegions)}",
+                                totalOriginalFiles, request.OutputDir);
                             batchIndex++;
                             currentBatchFiles.Clear();
                             currentBatchRegions.Clear();
                             currentBatchBytes = 0;
                         }
 
-                        int partsNeeded = (int)Math.Ceiling((double)region.TotalBytes / targetBytes);
+                        int partsNeeded = (int)Math.Ceiling((double)region.TotalBytes / request.TargetBytes);
                         var sortedRegionFiles = region.Files.OrderByDescending(f => f.FileSize).ToList();
                         List<MultiFileInfo>[] splitBuckets = new List<MultiFileInfo>[partsNeeded];
                         for (int i = 0; i < partsNeeded; i++) splitBuckets[i] = new List<MultiFileInfo>();
@@ -168,15 +179,18 @@ namespace ShapeDatTorrent.Core.Engines
 
                         for (int i = 0; i < partsNeeded; i++)
                         {
-                            SaveSubTorrent(masterTorrent, splitBuckets[i], batchIndex, torrentPath, $"{region.Name}-{i + 1}", totalOriginalFiles, outputDir);
+                            SaveSubTorrent(masterTorrent, splitBuckets[i], batchIndex, request.TorrentPath,
+                                $"Split-{region.Name}-{i + 1}", 
+                                totalOriginalFiles, request.OutputDir);
                             batchIndex++;
                         }
                         continue;
                     }
 
-                    if (currentBatchBytes + region.TotalBytes > targetBytes && currentBatchFiles.Count > 0)
+                    if (currentBatchBytes + region.TotalBytes > request.TargetBytes && currentBatchFiles.Count > 0)
                     {
-                        SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, GetBestBatchSuffix(currentBatchRegions), totalOriginalFiles, outputDir);
+                        SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, request.TorrentPath,
+                            $"Split-{GetBestBatchSuffix(currentBatchRegions)}", totalOriginalFiles, request.OutputDir);
                         batchIndex++;
                         currentBatchFiles.Clear();
                         currentBatchRegions.Clear();
@@ -189,7 +203,8 @@ namespace ShapeDatTorrent.Core.Engines
                 }
 
                 if (currentBatchFiles.Count > 0)
-                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, GetBestBatchSuffix(currentBatchRegions), totalOriginalFiles, outputDir);
+                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, request.TorrentPath, $"Split-{GetBestBatchSuffix(currentBatchRegions)}",
+                        totalOriginalFiles, request.OutputDir);
             }
         }
 
@@ -317,7 +332,9 @@ namespace ShapeDatTorrent.Core.Engines
             string outPath = Path.Combine(outputDir, $"{Path.GetFileNameWithoutExtension(originalPath)}_{nameSuffix}.torrent");
             using (var fileStream = File.Create(outPath)) subTorrent.EncodeTo(fileStream);
 
-            Log($" - [ ] Generated Batch {index}: {Path.GetFileName(outPath)} ({Math.Round((double)batchFiles.Sum(f => f.FileSize) / (1024 * 1024 * 1024), 2)} GB) | Files: {batchFiles.Count}/{totalOriginalFiles}", ConsoleColor.Gray);
+            Log($" - [ ] Generated Batch {index}: {Path.GetFileName(outPath)} " +
+                $"({Math.Round((double)batchFiles.Sum(f => f.FileSize) / (1024 * 1024 * 1024), 2)} GB) | " +
+                $"Files: {batchFiles.Count}/{totalOriginalFiles}", ConsoleColor.White);
         }
 
         private void WriteFlatBatches(Torrent masterTorrent, List<MultiFileInfo> files, long targetBytes, string originalTorrentPath, int totalOriginalFiles, string outputDir, bool isCurated)
@@ -331,7 +348,7 @@ namespace ShapeDatTorrent.Core.Engines
             {
                 if (currentBatchBytes + file.FileSize > targetBytes && currentBatchFiles.Count > 0)
                 {
-                    string suffix = isCurated ? $"Batch-Curated-{batchIndex}" : $"Batch-{batchIndex}";
+                    string suffix = isCurated ? $"Split-Filtered-{batchIndex}" : $"Split-{batchIndex}";
                     SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, suffix, totalOriginalFiles, outputDir);
                     batchIndex++;
                     currentBatchFiles.Clear();
@@ -343,7 +360,7 @@ namespace ShapeDatTorrent.Core.Engines
 
             if (currentBatchFiles.Count > 0)
             {
-                string suffix = isCurated ? $"Batch-Curated-{batchIndex}" : $"Batch-{batchIndex}";
+                string suffix = isCurated ? $"Split-Filtered-{batchIndex}" : $"Split-{batchIndex}";
                 SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, suffix, totalOriginalFiles, outputDir);
             }
         }

@@ -1,5 +1,7 @@
 ﻿using ShapeDatTorrent.ConsoleApp.UI.Views;
+using ShapeDatTorrent.Core.DTOs;
 using ShapeDatTorrent.Core.Engines;
+using ShapeDatTorrent.Core.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -103,6 +105,19 @@ namespace ShapeDatTorrent.ConsoleApp
             long targetBytes = GetTargetBytes();
 
             // 6. Execute
+
+            // Build the request
+            var request = new ProcessingRequest
+            {
+                TorrentPath = torrentPath,
+                KeptDatPath = keptDatPath,
+                RemovedDatPath = removedDatPath,
+                TargetBytes = targetBytes,
+                OutputDir = outputDir,
+                Strict = strict,
+                Regions = TorrentConstants.DefaultRegions
+            };
+
             var chunker = new TorrentChunker();
             chunker.OnLogMessage += (msg, color) =>
             {
@@ -111,19 +126,8 @@ namespace ShapeDatTorrent.ConsoleApp
                 Console.ResetColor();
             };
 
-            var regions = new List<string> {
-                    "USA", "Europe", "World", "United Kingdom", "UK", "Germany", "France", "Spain", "Italy", "Australia", "Japan", "Korea", "China",
-                    "Canada", "Brazil", "Netherlands", "Sweden", "Norway", "Denmark", "Finland", "Portugal", "Russia", "Asia", "Taiwan",
-                    "Greece", "Israel", "Belgium", "Austria", "Ireland", "Poland", "Scandinavia", "Argentina", "Switzerland", "Croatia",
-                    "Czech", "Hungary", "Iceland", "India", "New Zealand", "Singapore", "Slovakia", "South Africa", "Turkey", "Ukraine",
-                    "Export", "Hong Kong", "Thailand", "Latin America", "North America", "South America", "Central America", "Middle East",
-                    "Oceania", "Africa", "Unknown", "Soviet Union", "USSR", "Yugoslavia", "Bulgaria", "Romania", "Luxembourg", "Cyprus",
-                    "Malta", "Slovenia", "Estonia", "Latvia", "Lithuania", "Mexico", "Chile", "Colombia", "Peru", "Venezuela", "Philippines",
-                    "Malaysia", "Indonesia", "Vietnam", "Saudi Arabia", "UAE", "Egypt", "Morocco", "Tunisia"
-                };
-
             // Pass 'strict' into the Process method
-            chunker.Process(torrentPath, keptDatPath, removedDatPath, targetBytes, regions, outputDir, strict);
+            chunker.Process(request);
 
             Console.WriteLine("\nDone. Press any key to exit...");
             Console.ReadKey();
