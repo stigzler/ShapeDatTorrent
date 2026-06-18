@@ -15,14 +15,24 @@ namespace ShapeDatTorrent.ConsoleApp
             Console.WriteLine("                       SHAPE DAT TORRENT                               ");
             Console.WriteLine("=======================================================================");
 
-            if (args.Length == 0)
+            // 0. Handle Help and Empty Args
+            var helpFlags = new[] { "-h", "-help", "--help" };
+            if (args.Length == 0 || args.Any(a => helpFlags.Contains(a, StringComparer.OrdinalIgnoreCase)))
             {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("[ERROR] Please drop a .torrent (or a .dat + .torrent combo) onto this EXE.");
-                Console.ResetColor();
+                if (args.Length == 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine("[ERROR] No arguments provided.");
+                    Console.ResetColor();
+                }
+                ShowHelp();
+                Console.WriteLine("\nPress any key to exit...");
                 Console.ReadKey();
                 return;
             }
+
+            // Capture the strict flag
+            bool strict = args.Contains("--strict", StringComparer.OrdinalIgnoreCase);
 
             // 1. Organize Inputs
             string torrentPath = args.FirstOrDefault(f => f.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase));
@@ -51,7 +61,8 @@ namespace ShapeDatTorrent.ConsoleApp
             string outputDir = args.FirstOrDefault(f =>
                 !f.EndsWith(".dat", StringComparison.OrdinalIgnoreCase) &&
                 !f.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase) &&
-                f != "--verbose");
+                f != "--verbose" &&
+                f != "--strict"); // Ensure we don't treat the flag as an output directory
 
             if (string.IsNullOrEmpty(outputDir))
                 outputDir = AppDomain.CurrentDomain.BaseDirectory;
@@ -71,32 +82,49 @@ namespace ShapeDatTorrent.ConsoleApp
             };
 
             var regions = new List<string> {
-                "USA", "Europe", "Japan", "World", "Germany", "France", "Spain", "Italy", "Australia", "Korea", "China", "Canada", "Brazil",
-                "UK", "United Kingdom", "Netherlands", "Sweden", "Norway", "Denmark", "Finland", "Portugal", "Russia", "Asia", "Taiwan",
-                "Greece", "Israel", "Belgium", "Austria", "Ireland", "Poland", "Scandinavia", "Argentina", "Switzerland", "Croatia",
-                "Czech", "Hungary", "Iceland", "India", "New Zealand", "Singapore", "Slovakia", "South Africa", "Turkey", "Ukraine",
-                "Export", "Hong Kong", "Thailand", "Latin America", "North America", "South America", "Central America", "Middle East",
-                "Oceania", "Africa", "Unknown", "Soviet Union", "USSR", "Yugoslavia", "Bulgaria", "Romania", "Luxembourg", "Cyprus",
-                "Malta", "Slovenia", "Estonia", "Latvia", "Lithuania", "Mexico", "Chile", "Colombia", "Peru", "Venezuela", "Philippines",
-                "Malaysia", "Indonesia", "Vietnam", "Saudi Arabia", "UAE", "Egypt", "Morocco", "Tunisia"
-            };
+                    "USA", "Europe", "World", "United Kingdom", "UK", "Germany", "France", "Spain", "Italy", "Australia", "Japan", "Korea", "China",
+                    "Canada", "Brazil", "Netherlands", "Sweden", "Norway", "Denmark", "Finland", "Portugal", "Russia", "Asia", "Taiwan",
+                    "Greece", "Israel", "Belgium", "Austria", "Ireland", "Poland", "Scandinavia", "Argentina", "Switzerland", "Croatia",
+                    "Czech", "Hungary", "Iceland", "India", "New Zealand", "Singapore", "Slovakia", "South Africa", "Turkey", "Ukraine",
+                    "Export", "Hong Kong", "Thailand", "Latin America", "North America", "South America", "Central America", "Middle East",
+                    "Oceania", "Africa", "Unknown", "Soviet Union", "USSR", "Yugoslavia", "Bulgaria", "Romania", "Luxembourg", "Cyprus",
+                    "Malta", "Slovenia", "Estonia", "Latvia", "Lithuania", "Mexico", "Chile", "Colombia", "Peru", "Venezuela", "Philippines",
+                    "Malaysia", "Indonesia", "Vietnam", "Saudi Arabia", "UAE", "Egypt", "Morocco", "Tunisia"
+                };
 
-            // Call the updated Process method
-            chunker.Process(torrentPath, keptDatPath, removedDatPath, targetBytes, regions, outputDir);
+            // Pass 'strict' into the Process method
+            chunker.Process(torrentPath, keptDatPath, removedDatPath, targetBytes, regions, outputDir, strict);
 
             Console.WriteLine("\nDone. Press any key to exit...");
             Console.ReadKey();
         }
 
+        private static void ShowHelp()
+        {
+            Console.WriteLine("Separates multi-file, large download footprint torrents into user-set size individual torrents");
+            Console.WriteLine("E.g. a 10,000 file, 3TB rom torrent into 3 x 1TB ones");
+            Console.WriteLine("Additional features:");
+            Console.WriteLine("Curation: Include a Dat file (e.g. a ReTool one) to curate which files are placed in the final torrents");
+            Console.WriteLine("Reporting: Include an additional dat file of excluded files for full report of Orphans, Excluded and Included files");
+            Console.WriteLine("\nUsage: ShapeDatTorrent.exe <.torrent path> [options]");
+            Console.WriteLine("       Drag and Drop files onto the exe (auto-detects file types)");
+            Console.WriteLine("\nRequired:");
+            Console.WriteLine("  [file].torrent      Path to the source .torrent file.");
+            Console.WriteLine("\nOptional:");
+            Console.WriteLine("  [file].dat          Path to DAT file(s) for curation.");
+            Console.WriteLine("  [directory]         Custom output folder path.");
+            Console.WriteLine("\nFlags:");
+            Console.WriteLine("  --strict            Enable strict matching (Default: Loose matching).");
+            Console.WriteLine("\nExamples:");
+            Console.WriteLine("  ShapeDatTorrent.exe mycollection.torrent games.dat");
+            Console.WriteLine("  ShapeDatTorrent.exe mycollection.torrent kept.dat removed.dat C:\\Output --strict");
+        }
         private static void IdentifyDats(List<string> datPaths, out string kept, out string removed)
         {
             kept = null;
             removed = null;
-
             foreach (var path in datPaths)
             {
-                // Peek at the beginning of the file to check for "Removed titles" string
-                // Using a small buffer is safer for large files
                 bool isRemovedDat = false;
                 try
                 {
@@ -115,7 +143,7 @@ namespace ShapeDatTorrent.ConsoleApp
                         }
                     }
                 }
-                catch { /* Handle/Log if file is locked */ }
+                catch { }
 
                 if (isRemovedDat) removed = path;
                 else kept = path;

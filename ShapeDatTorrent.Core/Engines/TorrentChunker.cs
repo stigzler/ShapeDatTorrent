@@ -1,12 +1,13 @@
-﻿using System;
-using System.IO;
-using System.Linq;
-using System.Xml;
-using System.Collections.Generic;
-using System.Text.RegularExpressions;
-using BencodeNET.Parsing;
+﻿using BencodeNET.Parsing;
 using BencodeNET.Torrents;
 using ShapeDatTorrent.Core.Models;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Xml;
+using static System.Runtime.InteropServices.JavaScript.JSType;
 
 namespace ShapeDatTorrent.Core.Engines
 {
@@ -14,7 +15,12 @@ namespace ShapeDatTorrent.Core.Engines
     {
         public event Action<string, ConsoleColor> OnLogMessage;
 
-        public void Process(string torrentPath, string keptDatPath, string removedDatPath, long targetBytes, List<string> regionsList, string outputDir)
+        private Dictionary<string, List<AuditEntry>> _looseRegistry = new Dictionary<string, List<AuditEntry>>(StringComparer.OrdinalIgnoreCase);
+        private Dictionary<string, AuditEntry> _strictRegistry = new Dictionary<string, AuditEntry>(StringComparer.OrdinalIgnoreCase);
+
+
+        public void Process(string torrentPath, string keptDatPath, string removedDatPath,
+            long targetBytes, List<string> regionsList, string outputDir, bool strict)
         {
             var parser = new BencodeParser();
             Log("[..] Parsing master torrent metadata...");
@@ -30,28 +36,40 @@ namespace ShapeDatTorrent.Core.Engines
             if (masterTorrent.Files == null) return;
             int totalOriginalFiles = masterTorrent.Files.Count;
 
-            // Mode 1: DAT-Driven Curation / Audit
             if (!string.IsNullOrEmpty(keptDatPath))
             {
                 string mode = string.IsNullOrEmpty(removedDatPath) ? "Single DAT Mode" : "Dual DAT Mode";
-                Log($"[MODE] DAT-Driven Curation Active ({mode})", ConsoleColor.Green);
+                Log($"[MODE] DAT-Driven Curation Active ({mode}) | Strict Mode: {strict}", ConsoleColor.Green);
 
-                var registry = BuildAuditRegistry(keptDatPath, removedDatPath);
+                BuildAuditRegistry(keptDatPath, removedDatPath);
                 List<MultiFileInfo> selectedFiles = new List<MultiFileInfo>();
                 var auditEntries = new List<(string Type, string Filename, string Reason)>();
 
-                int orphanCount = 0;
-                int removalCount = 0;
-                int includedCount = 0;
+                int orphanCount = 0, removalCount = 0, includedCount = 0;
 
                 foreach (var file in masterTorrent.Files)
                 {
                     string filename = file.Path.LastOrDefault() ?? "";
                     string nameKey = Path.GetFileNameWithoutExtension(filename);
+                    AuditEntry match = null;
 
-                    if (registry.TryGetValue(nameKey, out var entry))
+                    if (strict)
                     {
-                        if (entry.IsKept)
+                        // Strict Match: Look in the Exact Name registry
+                        if (_strictRegistry.TryGetValue(nameKey, out var exactMatch))
+                            match = exactMatch;
+                    }
+                    else
+                    {
+                        // Loose Match: Look in the Cleaned Name registry
+                        string cleanName = GetCleanName(nameKey);
+                        if (_looseRegistry.TryGetValue(cleanName, out var candidates))
+                            match = FindBestMatch(nameKey, candidates, regionsList);
+                    }
+
+                    if (match != null)
+                    {
+                        if (match.IsKept)
                         {
                             includedCount++;
                             selectedFiles.Add(file);
@@ -60,26 +78,20 @@ namespace ShapeDatTorrent.Core.Engines
                         else
                         {
                             removalCount++;
-                            string cleanReason = entry.Reason.Replace("Remove reason:", "", StringComparison.OrdinalIgnoreCase).Trim();
-                            string reasonText = $"Retool: Remove reason: {cleanReason}";
-                            auditEntries.Add(("EXCLUDED", filename, reasonText));
+                            string cleanReason = match.Reason.Replace("Remove reason:", "", StringComparison.OrdinalIgnoreCase).Trim();
+                            auditEntries.Add(("EXCLUDED", filename, $"Retool: Remove reason: {cleanReason}"));
                         }
                     }
                     else
                     {
                         orphanCount++;
-                        string reasonText = string.IsNullOrEmpty(removedDatPath)
-                            ? "Retool: Not in Dat. No Retool Removed dat sent."
-                            : "Orphan (Not in any DAT)";
-
+                        string reasonText = string.IsNullOrEmpty(removedDatPath) ? "Retool: Not in Dat. No Retool Removed dat sent." : "Orphan (Not in any DAT)";
                         auditEntries.Add(("ORPHAN", filename, reasonText));
                     }
                 }
 
-                // Report Statistics
                 Log($"[STATS] Audit complete. Orphans: {orphanCount} | Removals: {removalCount} | Included: {includedCount}", ConsoleColor.Yellow);
 
-                // Sort: ORPHAN (0) -> EXCLUDED (1) -> INCLUDED (2), then alphabetical by filename
                 var finalLogLines = auditEntries
                     .OrderBy(x => x.Type == "ORPHAN" ? 0 : (x.Type == "EXCLUDED" ? 1 : 2))
                     .ThenBy(x => x.Filename)
@@ -87,7 +99,6 @@ namespace ShapeDatTorrent.Core.Engines
 
                 string logPath = Path.Combine(outputDir, "analysis_log.txt");
                 File.WriteAllLines(logPath, finalLogLines);
-
                 Log($"[REPORT] Audit log written to: {logPath}", ConsoleColor.DarkGray);
 
                 if (selectedFiles.Count > 0)
@@ -182,13 +193,40 @@ namespace ShapeDatTorrent.Core.Engines
             }
         }
 
+        private string GetCleanName(string filename)
+        {
+            var match = Regex.Match(filename, @"^(.*?)\s*\(", RegexOptions.IgnoreCase);
+            return match.Success ? match.Groups[1].Value.Trim() : filename;
+        }
+
+        private AuditEntry FindBestMatch(string filename, List<AuditEntry> candidates, List<string> regionPriority)
+        {
+            if (candidates.Count == 1) return candidates[0];
+
+            var fileRegions = Regex.Matches(filename, @"\((.*?)\)").Cast<Match>()
+                                   .SelectMany(m => m.Groups[1].Value.Split(','))
+                                   .Select(r => r.Trim()).ToList();
+
+            return candidates.OrderBy(c => {
+                var cRegions = Regex.Matches(c.Name, @"\((.*?)\)").Cast<Match>()
+                                    .SelectMany(m => m.Groups[1].Value.Split(','))
+                                    .Select(r => r.Trim()).ToList();
+
+                var common = cRegions.Intersect(fileRegions, StringComparer.OrdinalIgnoreCase).ToList();
+                return common.Any() ? common.Min(r => regionPriority.FindIndex(p => p.Equals(r, StringComparison.OrdinalIgnoreCase)) != -1
+                                                     ? regionPriority.FindIndex(p => p.Equals(r, StringComparison.OrdinalIgnoreCase))
+                                                     : 999)
+                                    : 999;
+            }).FirstOrDefault();
+        }
+
         // Update the registry definition to hold a list of potential candidates
         private Dictionary<string, List<AuditEntry>> _registry = new Dictionary<string, List<AuditEntry>>(StringComparer.OrdinalIgnoreCase);
 
         private void BuildAuditRegistry(string keptPath, string removedPath)
         {
-            _registry.Clear();
-            // ParseDat now appends to the list
+            _looseRegistry.Clear();
+            _strictRegistry.Clear();
             ParseDat(keptPath, true);
             if (!string.IsNullOrEmpty(removedPath)) ParseDat(removedPath, false);
         }
@@ -207,34 +245,56 @@ namespace ShapeDatTorrent.Core.Engines
         private void ParseDat(string path, bool isKept)
         {
             var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore, XmlResolver = null };
+
             using (var reader = XmlReader.Create(path, settings))
             {
                 string currentGame = null;
                 string currentComment = null;
+
                 while (reader.Read())
                 {
-                    if (reader.NodeType == XmlNodeType.Element && reader.Name == "game")
-                        currentGame = reader.GetAttribute("name");
-
-                    if (reader.NodeType == XmlNodeType.Element && reader.Name == "comment" && !isKept)
-                        currentComment = reader.ReadElementContentAsString();
-
-                    if (reader.NodeType == XmlNodeType.EndElement && reader.Name == "game" && currentGame != null)
+                    if (reader.NodeType == XmlNodeType.Element)
                     {
-                        // Extract clean name (e.g., "Dynamite Soccer 98")
-                        string cleanName = GetCleanName(currentGame);
+                        if (reader.Name == "game")
+                        {
+                            currentGame = reader.GetAttribute("name");
+                        }
+                        else if (reader.Name == "comment" && !isKept)
+                        {
+                            currentComment = reader.ReadElementContentAsString();
+                        }
+                    }
+                    else if (reader.NodeType == XmlNodeType.EndElement && reader.Name == "game")
+                    {
+                        if (!string.IsNullOrEmpty(currentGame))
+                        {
+                            // Construct the entry
+                            var entry = new AuditEntry
+                            {
+                                Name = currentGame,
+                                IsKept = isKept,
+                                Reason = isKept ? "Retained" : (currentComment ?? "Excluded")
+                            };
 
-                        if (!_registry.ContainsKey(cleanName))
-                            _registry[cleanName] = new List<AuditEntry>();
+                            // 1. Populate Strict Registry (Key is exact filename/DAT name)
+                            _strictRegistry[currentGame] = entry;
 
-                        _registry[cleanName].Add(new AuditEntry { Name = currentGame, IsKept = isKept, Reason = isKept ? "Retained" : (currentComment ?? "Excluded") });
+                            // 2. Populate Loose Registry (Key is cleaned name for fuzzy matching)
+                            string cleanName = GetCleanName(currentGame);
+                            if (!_looseRegistry.ContainsKey(cleanName))
+                            {
+                                _looseRegistry[cleanName] = new List<AuditEntry>();
+                            }
+                            _looseRegistry[cleanName].Add(entry);
+                        }
 
-                        currentGame = null; currentComment = null;
+                        // Reset for next block
+                        currentGame = null;
+                        currentComment = null;
                     }
                 }
             }
         }
-
         private void SaveSubTorrent(Torrent master, List<MultiFileInfo> batchFiles, int index, string originalPath, string nameSuffix, int totalOriginalFiles, string outputDir)
         {
             var subTorrent = new Torrent
