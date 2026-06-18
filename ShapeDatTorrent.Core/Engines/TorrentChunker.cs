@@ -13,6 +13,34 @@ namespace ShapeDatTorrent.Core.Engines
     {
         public event Action<string, ConsoleColor> OnLogMessage;
 
+        private void WriteFlatBatches(Torrent masterTorrent, List<MultiFileInfo> files, long targetBytes, string originalTorrentPath, int totalOriginalFiles, string outputDir, bool isCurated)
+        {
+            int batchIndex = 1;
+            long currentBatchBytes = 0;
+            var currentBatchFiles = new List<MultiFileInfo>();
+            var sortedFiles = files.OrderByDescending(f => f.FileSize).ToList();
+
+            foreach (var file in sortedFiles)
+            {
+                if (currentBatchBytes + file.FileSize > targetBytes && currentBatchFiles.Count > 0)
+                {
+                    string suffix = isCurated ? $"Batch-Curated-{batchIndex}" : $"Batch-{batchIndex}";
+                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, suffix, totalOriginalFiles, outputDir);
+                    batchIndex++;
+                    currentBatchFiles.Clear();
+                    currentBatchBytes = 0;
+                }
+                currentBatchFiles.Add(file);
+                currentBatchBytes += file.FileSize;
+            }
+
+            if (currentBatchFiles.Count > 0)
+            {
+                string suffix = isCurated ? $"Batch-Curated-{batchIndex}" : $"Batch-{batchIndex}";
+                SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, suffix, totalOriginalFiles, outputDir);
+            }
+        }
+
         public void Process(string torrentPath, string datPath, long targetBytes, List<string> regionsList, string outputDir)
         {
             var parser = new BencodeParser();
@@ -43,19 +71,60 @@ namespace ShapeDatTorrent.Core.Engines
                 Log($"[MODE] DAT-Driven Curation Active!", ConsoleColor.Green);
                 Log($"[PATH] Target Output Folder: \"{outputDir}\"\n", ConsoleColor.White);
 
-                HashSet<string> allowedRomNames = ParseDatRomNames(datPath);
+                HashSet<string> allowedNames = ParseDatNames(datPath);
                 List<MultiFileInfo> selectedFiles = new List<MultiFileInfo>();
+
+                // Tracking for summary
+                HashSet<string> matchedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var file in masterTorrent.Files)
                 {
                     string filename = file.Path.LastOrDefault();
-                    if (filename != null && allowedRomNames.Contains(filename))
+                    if (filename == null) continue;
+
+                    string filenameWithoutExt = Path.GetFileNameWithoutExtension(filename);
+                    bool matchFound = false;
+
+                    // 1. Exact match
+                    if (allowedNames.Contains(filename) || allowedNames.Contains(filenameWithoutExt))
+                    {
+                        matchFound = true;
+                    }
+                    // 2. Starts-with match
+                    else
+                    {
+                        foreach (var datName in allowedNames)
+                        {
+                            if (filenameWithoutExt.StartsWith(datName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                matchFound = true;
+                                matchedNames.Add(datName);
+                                break;
+                            }
+                        }
+                    }
+
+                    if (matchFound)
+                    {
                         selectedFiles.Add(file);
+                        // If it was a direct match, we add it to matchedNames for the report
+                        if (!matchedNames.Contains(filenameWithoutExt)) matchedNames.Add(filenameWithoutExt);
+                    }
+                }
+
+                // Reporting logic
+                Log($"[REPORT] DAT Contains: {allowedNames.Count} entries.", ConsoleColor.Cyan);
+                Log($"[REPORT] Torrent contains: {masterTorrent.Files.Count} total files.", ConsoleColor.Cyan);
+                Log($"[REPORT] Files matched: {selectedFiles.Count} ({matchedNames.Count} unique games).", ConsoleColor.Green);
+
+                if (matchedNames.Count < allowedNames.Count)
+                {
+                    Log($"[WARNING] Some DAT items were NOT found in the torrent. Missing count: {allowedNames.Count - matchedNames.Count}", ConsoleColor.Yellow);
                 }
 
                 if (selectedFiles.Count > 0)
                 {
-                    WriteFlatBatches(masterTorrent, selectedFiles, targetBytes, torrentPath, totalOriginalFiles, outputDir);
+                    WriteFlatBatches(masterTorrent, selectedFiles, targetBytes, torrentPath, totalOriginalFiles, outputDir, true);
                 }
                 else
                 {
@@ -268,23 +337,30 @@ namespace ShapeDatTorrent.Core.Engines
             Log($" - [ ] Generated Batch {index}: {outFileName} ({totalGB} GB) | Files: {batchFileCount}/{totalOriginalFiles}", ConsoleColor.Gray);
         }
 
-        private HashSet<string> ParseDatRomNames(string datPath)
+        private HashSet<string> ParseDatNames(string datPath)
         {
-            var romNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            using (var reader = XmlReader.Create(datPath))
+            var allowedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var settings = new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Ignore,
+                XmlResolver = null
+            };
+
+            using (var reader = XmlReader.Create(datPath, settings))
             {
                 while (reader.Read())
                 {
-                    if (reader.NodeType == XmlNodeType.Element && reader.Name == "rom")
+                    if (reader.NodeType == XmlNodeType.Element && reader.Name == "game")
                     {
-                        string nameAttribute = reader.GetAttribute("name");
-                        if (!string.IsNullOrEmpty(nameAttribute)) romNames.Add(nameAttribute);
+                        string gameName = reader.GetAttribute("name");
+                        if (!string.IsNullOrEmpty(gameName))
+                            allowedNames.Add(gameName);
                     }
                 }
             }
-            return romNames;
+            return allowedNames;
         }
-
         private void Log(string message, ConsoleColor color = ConsoleColor.Gray)
         {
             OnLogMessage?.Invoke(message, color);
