@@ -174,7 +174,7 @@ namespace ShapeDatTorrent.Core.Engines
                 }
 
                 Log("-----------------------------------------------------------------------");
-                Log("Analysis Complete. Copy your checkboxes directly out of the terminal.", ConsoleColor.Green);
+                Log("Analysis Complete. Outcomes are in markdown format for copying.", ConsoleColor.Green);
             }
         }
 
