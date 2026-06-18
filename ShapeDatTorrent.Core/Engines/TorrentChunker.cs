@@ -25,6 +25,8 @@ namespace ShapeDatTorrent.Core.Engines
                 return;
             }
 
+            int totalOriginalFiles = masterTorrent.Files.Count;
+
             // Mode 1: DAT Curation
             if (!string.IsNullOrEmpty(datPath))
             {
@@ -41,7 +43,7 @@ namespace ShapeDatTorrent.Core.Engines
 
                 if (selectedFiles.Count > 0)
                 {
-                    WriteFlatBatches(masterTorrent, selectedFiles, targetBytes, torrentPath);
+                    WriteFlatBatches(masterTorrent, selectedFiles, targetBytes, torrentPath, totalOriginalFiles);
                 }
                 else
                 {
@@ -105,7 +107,7 @@ namespace ShapeDatTorrent.Core.Engines
                     .ToList();
 
                 long targetGB = targetBytes / (1024 * 1024 * 1024);
-                Log($"### OPTIMIZED BATCH ALLOCATIONS (Target: {targetGB} GB)", ConsoleColor.Yellow);
+                Log($"### OPTIMIZED BATCH ALLOCATIONS (Target: {targetGB} GB) [Total Master Files: {totalOriginalFiles}]", ConsoleColor.Yellow);
 
                 int batchIndex = 1;
                 long currentBatchBytes = 0;
@@ -120,7 +122,7 @@ namespace ShapeDatTorrent.Core.Engines
                         if (currentBatchFiles.Count > 0)
                         {
                             string flushSuffix = GetBestBatchSuffix(currentBatchRegions);
-                            SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, flushSuffix);
+                            SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, flushSuffix, totalOriginalFiles);
                             batchIndex++;
                             currentBatchFiles.Clear();
                             currentBatchRegions.Clear();
@@ -143,7 +145,7 @@ namespace ShapeDatTorrent.Core.Engines
                         for (int i = 0; i < partsNeeded; i++)
                         {
                             string splitSuffix = $"{region.Name}-{i + 1}";
-                            SaveSubTorrent(masterTorrent, splitBuckets[i], batchIndex, torrentPath, splitSuffix);
+                            SaveSubTorrent(masterTorrent, splitBuckets[i], batchIndex, torrentPath, splitSuffix, totalOriginalFiles);
                             batchIndex++;
                         }
                         continue;
@@ -153,7 +155,7 @@ namespace ShapeDatTorrent.Core.Engines
                     if (currentBatchBytes + region.TotalBytes > targetBytes && currentBatchFiles.Count > 0)
                     {
                         string normalSuffix = GetBestBatchSuffix(currentBatchRegions);
-                        SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, normalSuffix);
+                        SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, normalSuffix, totalOriginalFiles);
                         batchIndex++;
                         currentBatchFiles.Clear();
                         currentBatchRegions.Clear();
@@ -170,7 +172,7 @@ namespace ShapeDatTorrent.Core.Engines
                 if (currentBatchFiles.Count > 0)
                 {
                     string finalSuffix = GetBestBatchSuffix(currentBatchRegions);
-                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, finalSuffix);
+                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, finalSuffix, totalOriginalFiles);
                 }
 
                 Log("-----------------------------------------------------------------------");
@@ -178,12 +180,10 @@ namespace ShapeDatTorrent.Core.Engines
             }
         }
 
-        // Smart naming selector to pull out dominant regions or fallback to Various
         private string GetBestBatchSuffix(List<string> regionsInBatch)
         {
             if (regionsInBatch.Count == 1) return regionsInBatch[0];
 
-            // If a collection contains a primary core region, name it after that region
             if (regionsInBatch.Contains("USA", StringComparer.OrdinalIgnoreCase)) return "USA";
             if (regionsInBatch.Contains("Europe", StringComparer.OrdinalIgnoreCase)) return "Europe";
             if (regionsInBatch.Contains("Japan", StringComparer.OrdinalIgnoreCase)) return "Japan";
@@ -191,7 +191,7 @@ namespace ShapeDatTorrent.Core.Engines
             return "Various";
         }
 
-        private void WriteFlatBatches(Torrent masterTorrent, List<MultiFileInfo> files, long targetBytes, string originalTorrentPath)
+        private void WriteFlatBatches(Torrent masterTorrent, List<MultiFileInfo> files, long targetBytes, string originalTorrentPath, int totalOriginalFiles)
         {
             int batchIndex = 1;
             long currentBatchBytes = 0;
@@ -202,7 +202,7 @@ namespace ShapeDatTorrent.Core.Engines
             {
                 if (currentBatchBytes + file.FileSize > targetBytes && currentBatchFiles.Count > 0)
                 {
-                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, $"Batch-{batchIndex}");
+                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, $"Batch-{batchIndex}", totalOriginalFiles);
                     batchIndex++;
                     currentBatchFiles.Clear();
                     currentBatchBytes = 0;
@@ -212,10 +212,10 @@ namespace ShapeDatTorrent.Core.Engines
             }
 
             if (currentBatchFiles.Count > 0)
-                SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, $"Batch-{batchIndex}");
+                SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, $"Batch-{batchIndex}", totalOriginalFiles);
         }
 
-        private void SaveSubTorrent(Torrent master, List<MultiFileInfo> batchFiles, int index, string originalPath, string nameSuffix)
+        private void SaveSubTorrent(Torrent master, List<MultiFileInfo> batchFiles, int index, string originalPath, string nameSuffix, int totalOriginalFiles)
         {
             var subTorrent = new Torrent
             {
@@ -246,7 +246,9 @@ namespace ShapeDatTorrent.Core.Engines
             }
 
             double totalGB = Math.Round((double)batchFiles.Sum(f => f.FileSize) / (1024 * 1024 * 1024), 2);
-            Log($" - [ ] Generated Batch {index}: {outFileName} ({totalGB} GB)", ConsoleColor.Gray);
+            int batchFileCount = batchFiles.Count;
+
+            Log($" - [ ] Generated Batch {index}: {outFileName} ({totalGB} GB) | Files: {batchFileCount}/{totalOriginalFiles}", ConsoleColor.Gray);
         }
 
         private HashSet<string> ParseDatRomNames(string datPath)
