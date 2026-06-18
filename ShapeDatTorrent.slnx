@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="ShapeDatTorrent.ConsoleApp/ShapeDatTorrent.ConsoleApp.csproj" Id="bcd5aa34-15a7-4128-81dd-a4a19a4d673f">
+    <BuildDependency Project="ShapeDatTorrent.Core/ShapeDatTorrent.Core.csproj" />
+  </Project>
+  <Project Path="ShapeDatTorrent.Core/ShapeDatTorrent.Core.csproj" Id="a8030942-37cc-453b-bae4-a552e628a0fe" />
+</Solution>
