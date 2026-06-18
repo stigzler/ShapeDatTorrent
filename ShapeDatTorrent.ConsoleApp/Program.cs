@@ -1,6 +1,7 @@
 ﻿using ShapeDatTorrent.Core.Engines;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 
 namespace ShapeDatTorrent.ConsoleApp
@@ -26,6 +27,11 @@ namespace ShapeDatTorrent.ConsoleApp
             string datPath = args.FirstOrDefault(f => f.EndsWith(".dat", StringComparison.OrdinalIgnoreCase));
             string torrentPath = args.FirstOrDefault(f => f.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase));
 
+            // Any argument that isn't a .dat or .torrent is treated as the output folder
+            string outputDir = args.FirstOrDefault(f =>
+                !f.EndsWith(".dat", StringComparison.OrdinalIgnoreCase) &&
+                !f.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase));
+
             // 1. Check if a torrent file was actually provided
             if (string.IsNullOrEmpty(torrentPath))
             {
@@ -46,7 +52,7 @@ namespace ShapeDatTorrent.ConsoleApp
                 return;
             }
 
-            // 3. Optional: Verify the DAT file exists if one was provided
+            // 3. Verify the DAT file exists if one was provided
             if (!string.IsNullOrEmpty(datPath) && !File.Exists(datPath))
             {
                 Console.ForegroundColor = ConsoleColor.Red;
@@ -56,13 +62,25 @@ namespace ShapeDatTorrent.ConsoleApp
                 return;
             }
 
+            // 4. Check output folder path (Default to App Domain base path if not present)
+            if (string.IsNullOrEmpty(outputDir))
+            {
+                outputDir = AppDomain.CurrentDomain.BaseDirectory;
+            }
+            else if (!Directory.Exists(outputDir))
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"[WARNING] Specified output directory does not exist:\n\"{outputDir}\"");
+                Console.WriteLine("The engine will attempt to create it upon chunk generation.\n");
+                Console.ResetColor();
+            }
+
             long targetGB;
             while (true)
             {
                 Console.Write("Enter target chunk batch size in GB (Minimum 50): ");
                 string input = Console.ReadLine()?.Trim();
 
-                // 1. Check if it's a valid whole number (this naturally rejects decimals)
                 if (!long.TryParse(input, out targetGB))
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
@@ -71,7 +89,6 @@ namespace ShapeDatTorrent.ConsoleApp
                     continue;
                 }
 
-                // 2. Check lower boundary
                 if (targetGB < 50)
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
@@ -80,7 +97,6 @@ namespace ShapeDatTorrent.ConsoleApp
                     continue;
                 }
 
-                // 3. Prevent Byte Overflow (Additional Check)
                 if (targetGB > 8589934591)
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
@@ -89,15 +105,13 @@ namespace ShapeDatTorrent.ConsoleApp
                     continue;
                 }
 
-                break; // Input is completely valid, break the loop
+                break;
             }
 
             long targetBytes = targetGB * 1024 * 1024 * 1024;
 
-            // Fire up our modular engine
             var chunker = new TorrentChunker();
 
-            // Listen to messages coming from the Core project and write them out to the screen
             chunker.OnLogMessage += (msg, color) =>
             {
                 Console.ForegroundColor = color;
@@ -105,7 +119,6 @@ namespace ShapeDatTorrent.ConsoleApp
                 Console.ResetColor();
             };
 
-            // Exhaustive 78-region array from your original batch script
             var regions = new List<string> {
                 "USA", "Europe", "Japan", "World", "Germany", "France", "Spain", "Italy", "Australia", "Korea", "China", "Canada", "Brazil",
                 "UK", "United Kingdom", "Netherlands", "Sweden", "Norway", "Denmark", "Finland", "Portugal", "Russia", "Asia", "Taiwan",
@@ -117,7 +130,7 @@ namespace ShapeDatTorrent.ConsoleApp
                 "Malaysia", "Indonesia", "Vietnam", "Saudi Arabia", "UAE", "Egypt", "Morocco", "Tunisia"
             };
 
-            chunker.Process(torrentPath, datPath, targetBytes, regions);
+            chunker.Process(torrentPath, datPath, targetBytes, regions, outputDir);
 
             Console.WriteLine("\nDone. Press any key to exit...");
             Console.ReadKey();

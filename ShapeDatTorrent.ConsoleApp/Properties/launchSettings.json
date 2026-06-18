@@ -2,7 +2,7 @@
   "profiles": {
     "ShapeDatTorrent.ConsoleApp": {
       "commandName": "Project",
-      "commandLineArgs": "\"C:\\Users\\stigz\\source\\repos\\0.MyCode\\NET\\ShapeDatTorrent\\ShapeDatTorrent.ConsoleApp\\bin\\Debug\\net8.0\\Minerva_Myrient - Redump - Sony - PlayStation.torrent\""
+      "commandLineArgs": "\"C:\\Users\\stigz\\source\\repos\\0.MyCode\\NET\\ShapeDatTorrent\\ShapeDatTorrent.ConsoleApp\\bin\\Debug\\net8.0\\Minerva_Myrient - Redump - Sony - PlayStation.torrent\" \r\n\r\n\"C:\\Users\\stigz\\source\\repos\\0.MyCode\\NET\\ShapeDatTorrent\\ShapeDatTorrent.ConsoleApp\\bin\\Debug\\net8.0\\output\"\r\n\r\n"
     }
   }
 }

@@ -13,11 +13,21 @@ namespace ShapeDatTorrent.Core.Engines
     {
         public event Action<string, ConsoleColor> OnLogMessage;
 
-        public void Process(string torrentPath, string datPath, long targetBytes, List<string> regionsList)
+        public void Process(string torrentPath, string datPath, long targetBytes, List<string> regionsList, string outputDir)
         {
             var parser = new BencodeParser();
             Log("[..] Parsing master torrent metadata...");
-            Torrent masterTorrent = parser.Parse<Torrent>(torrentPath);
+
+            Torrent masterTorrent;
+            try
+            {
+                masterTorrent = parser.Parse<Torrent>(torrentPath);
+            }
+            catch (Exception)
+            {
+                Log("[ERROR] Failed to parse torrent metadata. The file may be corrupted or not a valid torrent format.", ConsoleColor.Red);
+                return;
+            }
 
             if (masterTorrent.Files == null)
             {
@@ -31,6 +41,8 @@ namespace ShapeDatTorrent.Core.Engines
             if (!string.IsNullOrEmpty(datPath))
             {
                 Log($"[MODE] DAT-Driven Curation Active!", ConsoleColor.Green);
+                Log($"[PATH] Target Output Folder: \"{outputDir}\"\n", ConsoleColor.White);
+
                 HashSet<string> allowedRomNames = ParseDatRomNames(datPath);
                 List<MultiFileInfo> selectedFiles = new List<MultiFileInfo>();
 
@@ -43,7 +55,7 @@ namespace ShapeDatTorrent.Core.Engines
 
                 if (selectedFiles.Count > 0)
                 {
-                    WriteFlatBatches(masterTorrent, selectedFiles, targetBytes, torrentPath, totalOriginalFiles);
+                    WriteFlatBatches(masterTorrent, selectedFiles, targetBytes, torrentPath, totalOriginalFiles, outputDir);
                 }
                 else
                 {
@@ -53,7 +65,9 @@ namespace ShapeDatTorrent.Core.Engines
             // Mode 2: Pure Swarm Balancer
             else
             {
-                Log($"[MODE] Pure Swarm Balancing Engine Active\n", ConsoleColor.Cyan);
+                Log($"[MODE] Pure Swarm Balancing Engine Active!", ConsoleColor.Cyan);
+                Log($"[PATH] Target Output Folder: \"{outputDir}\"\n", ConsoleColor.White);
+
                 Log("Building optimally sized region buckets...");
                 Log("-----------------------------------------------------------------------");
 
@@ -116,13 +130,12 @@ namespace ShapeDatTorrent.Core.Engines
 
                 foreach (var region in activeRegions)
                 {
-                    // Case A: OVERSIZED REGION DETECTED -> Split into evenly distributed sub-chunks
                     if (region.TotalBytes > targetBytes)
                     {
                         if (currentBatchFiles.Count > 0)
                         {
                             string flushSuffix = GetBestBatchSuffix(currentBatchRegions);
-                            SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, flushSuffix, totalOriginalFiles);
+                            SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, flushSuffix, totalOriginalFiles, outputDir);
                             batchIndex++;
                             currentBatchFiles.Clear();
                             currentBatchRegions.Clear();
@@ -145,37 +158,36 @@ namespace ShapeDatTorrent.Core.Engines
                         for (int i = 0; i < partsNeeded; i++)
                         {
                             string splitSuffix = $"{region.Name}-{i + 1}";
-                            SaveSubTorrent(masterTorrent, splitBuckets[i], batchIndex, torrentPath, splitSuffix, totalOriginalFiles);
+                            SaveSubTorrent(masterTorrent, splitBuckets[i], batchIndex, torrentPath, splitSuffix, totalOriginalFiles, outputDir);
                             batchIndex++;
                         }
                         continue;
                     }
 
-                    // Case B: Adding this region rolls over current batch target limit
                     if (currentBatchBytes + region.TotalBytes > targetBytes && currentBatchFiles.Count > 0)
                     {
                         string normalSuffix = GetBestBatchSuffix(currentBatchRegions);
-                        SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, normalSuffix, totalOriginalFiles);
+                        SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, normalSuffix, totalOriginalFiles, outputDir);
                         batchIndex++;
                         currentBatchFiles.Clear();
                         currentBatchRegions.Clear();
                         currentBatchBytes = 0;
                     }
 
-                    // Accumulate normally
                     currentBatchFiles.AddRange(region.Files);
                     currentBatchRegions.Add(region.Name);
                     currentBatchBytes += region.TotalBytes;
                 }
 
-                // Flush out remaining items
                 if (currentBatchFiles.Count > 0)
                 {
                     string finalSuffix = GetBestBatchSuffix(currentBatchRegions);
-                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, finalSuffix, totalOriginalFiles);
+                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, torrentPath, finalSuffix, totalOriginalFiles, outputDir);
                 }
 
                 Log("-----------------------------------------------------------------------");
+                Log($"[SUCCESS] All chunk .torrent files have been successfully created in:", ConsoleColor.Green);
+                Log($"          \"{outputDir}\"\n", ConsoleColor.White);
                 Log("Analysis Complete. Outcomes are in markdown format for copying.", ConsoleColor.Green);
             }
         }
@@ -191,7 +203,7 @@ namespace ShapeDatTorrent.Core.Engines
             return "Various";
         }
 
-        private void WriteFlatBatches(Torrent masterTorrent, List<MultiFileInfo> files, long targetBytes, string originalTorrentPath, int totalOriginalFiles)
+        private void WriteFlatBatches(Torrent masterTorrent, List<MultiFileInfo> files, long targetBytes, string originalTorrentPath, int totalOriginalFiles, string outputDir)
         {
             int batchIndex = 1;
             long currentBatchBytes = 0;
@@ -202,7 +214,7 @@ namespace ShapeDatTorrent.Core.Engines
             {
                 if (currentBatchBytes + file.FileSize > targetBytes && currentBatchFiles.Count > 0)
                 {
-                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, $"Batch-{batchIndex}", totalOriginalFiles);
+                    SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, $"Batch-{batchIndex}", totalOriginalFiles, outputDir);
                     batchIndex++;
                     currentBatchFiles.Clear();
                     currentBatchBytes = 0;
@@ -212,10 +224,10 @@ namespace ShapeDatTorrent.Core.Engines
             }
 
             if (currentBatchFiles.Count > 0)
-                SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, $"Batch-{batchIndex}", totalOriginalFiles);
+                SaveSubTorrent(masterTorrent, currentBatchFiles, batchIndex, originalTorrentPath, $"Batch-{batchIndex}", totalOriginalFiles, outputDir);
         }
 
-        private void SaveSubTorrent(Torrent master, List<MultiFileInfo> batchFiles, int index, string originalPath, string nameSuffix, int totalOriginalFiles)
+        private void SaveSubTorrent(Torrent master, List<MultiFileInfo> batchFiles, int index, string originalPath, string nameSuffix, int totalOriginalFiles, string outputDir)
         {
             var subTorrent = new Torrent
             {
@@ -237,8 +249,13 @@ namespace ShapeDatTorrent.Core.Engines
             }
             subTorrent.Files = fileListContainer;
 
+            if (!Directory.Exists(outputDir))
+            {
+                Directory.CreateDirectory(outputDir);
+            }
+
             string outFileName = $"{Path.GetFileNameWithoutExtension(originalPath)}_{nameSuffix}.torrent";
-            string outPath = Path.Combine(Path.GetDirectoryName(originalPath), outFileName);
+            string outPath = Path.Combine(outputDir, outFileName);
 
             using (var fileStream = File.Create(outPath))
             {
