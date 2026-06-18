@@ -2,7 +2,7 @@
   "profiles": {
     "ShapeDatTorrent.ConsoleApp": {
       "commandName": "Project",
-      "commandLineArgs": "\"C:\\Users\\stigz\\source\\repos\\0.MyCode\\NET\\ShapeDatTorrent\\ShapeDatTorrent.ConsoleApp\\bin\\Debug\\net8.0\\Minerva_Myrient - Redump - Sony - PlayStation.torrent\" \r\n\r\n\"C:\\Users\\stigz\\source\\repos\\0.MyCode\\NET\\ShapeDatTorrent\\ShapeDatTorrent.ConsoleApp\\bin\\Debug\\net8.0\\Sony - PlayStation (2026-06-15 11-55-46) (Retool 2026-06-18 13-16-20) (4,381) [-AabBcdDekmMopPrv].dat\"\r\n\r\n\"C:\\Users\\stigz\\source\\repos\\0.MyCode\\NET\\ShapeDatTorrent\\ShapeDatTorrent.ConsoleApp\\bin\\Debug\\net8.0\\output\"\r\n\r\n\r\n\r\n"
+      "commandLineArgs": "\"C:\\Users\\stigz\\source\\repos\\0.MyCode\\NET\\ShapeDatTorrent\\ShapeDatTorrent.ConsoleApp\\bin\\Debug\\net8.0\\Minerva_Myrient - Redump - Sony - PlayStation.torrent\" \r\n\r\n\"Output\"\r\n\r\n\"C:\\Users\\stigz\\source\\repos\\0.MyCode\\NET\\ShapeDatTorrent\\ShapeDatTorrent.ConsoleApp\\bin\\Debug\\net8.0\\Sony - PlayStation (2026-06-15 11-55-46) (Retool 2026-06-18 13-16-20) (4,381) [-AabBcdDekmMopPrv].dat\"\r\n\r\n\r\n\"C:\\Users\\stigz\\source\\repos\\0.MyCode\\NET\\ShapeDatTorrent\\ShapeDatTorrent.ConsoleApp\\bin\\Debug\\net8.0\\Sony - PlayStation (2026-06-15 11-55-46) (Retool 2026-06-18 14-31-59) (Removed titles) (6,533) [-AaBbcdDekmMopPrv].dat\""
     }
   }
 }

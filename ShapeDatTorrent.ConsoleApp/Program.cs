@@ -24,94 +24,45 @@ namespace ShapeDatTorrent.ConsoleApp
                 return;
             }
 
-            string datPath = args.FirstOrDefault(f => f.EndsWith(".dat", StringComparison.OrdinalIgnoreCase));
+            // 1. Organize Inputs
             string torrentPath = args.FirstOrDefault(f => f.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase));
+            var datFiles = args.Where(f => f.EndsWith(".dat", StringComparison.OrdinalIgnoreCase)).ToList();
 
-            // Any argument that isn't a .dat or .torrent is treated as the output folder
+            // 2. Identify and Validate DATs
+            string keptDatPath = null;
+            string removedDatPath = null;
+
+            if (datFiles.Count > 0)
+            {
+                IdentifyDats(datFiles, out keptDatPath, out removedDatPath);
+            }
+
+            // 3. Validate mandatory Torrent file
+            if (string.IsNullOrEmpty(torrentPath) || !File.Exists(torrentPath))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("[ERROR] No valid .torrent file was provided/found.");
+                Console.ResetColor();
+                Console.ReadKey();
+                return;
+            }
+
+            // 4. Check output folder
             string outputDir = args.FirstOrDefault(f =>
                 !f.EndsWith(".dat", StringComparison.OrdinalIgnoreCase) &&
-                !f.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase));
+                !f.EndsWith(".torrent", StringComparison.OrdinalIgnoreCase) &&
+                f != "--verbose");
 
-            // 1. Check if a torrent file was actually provided
-            if (string.IsNullOrEmpty(torrentPath))
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("[ERROR] No .torrent file was provided. Please drop a valid .torrent file onto the EXE.");
-                Console.ResetColor();
-                Console.ReadKey();
-                return;
-            }
-
-            // 2. Verify the torrent file physically exists on disk
-            if (!File.Exists(torrentPath))
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[ERROR] Target torrent file could not be found:\n        \"{torrentPath}\"");
-                Console.ResetColor();
-                Console.ReadKey();
-                return;
-            }
-
-            // 3. Verify the DAT file exists if one was provided
-            if (!string.IsNullOrEmpty(datPath) && !File.Exists(datPath))
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[ERROR] Target DAT file was specified but could not be found:\n        \"{datPath}\"");
-                Console.ResetColor();
-                Console.ReadKey();
-                return;
-            }
-
-            // 4. Check output folder path (Default to App Domain base path if not present)
             if (string.IsNullOrEmpty(outputDir))
-            {
                 outputDir = AppDomain.CurrentDomain.BaseDirectory;
-            }
             else if (!Directory.Exists(outputDir))
-            {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[WARNING] Specified output directory does not exist:\n\"{outputDir}\"");
-                Console.WriteLine("The engine will attempt to create it upon chunk generation.\n");
-                Console.ResetColor();
-            }
+                Directory.CreateDirectory(outputDir);
 
-            long targetGB;
-            while (true)
-            {
-                Console.Write("Enter target chunk batch size in GB (Minimum 50): ");
-                string input = Console.ReadLine()?.Trim();
+            // 5. Gather Batch Size
+            long targetBytes = GetTargetBytes();
 
-                if (!long.TryParse(input, out targetGB))
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine("[ERROR] Input must be a valid whole number (no decimals or letters).\n");
-                    Console.ResetColor();
-                    continue;
-                }
-
-                if (targetGB < 50)
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine("[ERROR] Batch size cannot be less than 50 GB.\n");
-                    Console.ResetColor();
-                    continue;
-                }
-
-                if (targetGB > 8589934591)
-                {
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine("[ERROR] Input is too large! The maximum allowable size is 8,589,934,591 GB.\n");
-                    Console.ResetColor();
-                    continue;
-                }
-
-                break;
-            }
-
-            long targetBytes = targetGB * 1024 * 1024 * 1024;
-
+            // 6. Execute
             var chunker = new TorrentChunker();
-
             chunker.OnLogMessage += (msg, color) =>
             {
                 Console.ForegroundColor = color;
@@ -130,10 +81,61 @@ namespace ShapeDatTorrent.ConsoleApp
                 "Malaysia", "Indonesia", "Vietnam", "Saudi Arabia", "UAE", "Egypt", "Morocco", "Tunisia"
             };
 
-            chunker.Process(torrentPath, datPath, targetBytes, regions, outputDir);
+            // Call the updated Process method
+            chunker.Process(torrentPath, keptDatPath, removedDatPath, targetBytes, regions, outputDir);
 
             Console.WriteLine("\nDone. Press any key to exit...");
             Console.ReadKey();
+        }
+
+        private static void IdentifyDats(List<string> datPaths, out string kept, out string removed)
+        {
+            kept = null;
+            removed = null;
+
+            foreach (var path in datPaths)
+            {
+                // Peek at the beginning of the file to check for "Removed titles" string
+                // Using a small buffer is safer for large files
+                bool isRemovedDat = false;
+                try
+                {
+                    using (var reader = new StreamReader(path))
+                    {
+                        string line;
+                        int count = 0;
+                        while ((line = reader.ReadLine()) != null && count < 10)
+                        {
+                            if (line.Contains("(Removed titles)", StringComparison.OrdinalIgnoreCase))
+                            {
+                                isRemovedDat = true;
+                                break;
+                            }
+                            count++;
+                        }
+                    }
+                }
+                catch { /* Handle/Log if file is locked */ }
+
+                if (isRemovedDat) removed = path;
+                else kept = path;
+            }
+        }
+
+        private static long GetTargetBytes()
+        {
+            long targetGB;
+            while (true)
+            {
+                Console.Write("Enter target chunk batch size in GB (Minimum 50): ");
+                string input = Console.ReadLine()?.Trim();
+                if (long.TryParse(input, out targetGB) && targetGB >= 50)
+                    return targetGB * 1024 * 1024 * 1024;
+
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("[ERROR] Invalid size. Minimum 50GB required.");
+                Console.ResetColor();
+            }
         }
     }
 }
