@@ -97,7 +97,7 @@ namespace ShapeDatTorrent.Core.Engines
                     .ThenBy(x => x.Filename)
                     .Select(x => $"{x.Type} | File: {x.Filename} | {x.Reason}");
 
-                string logPath = Path.Combine(outputDir, "analysis_log.txt");
+                string logPath = Path.Combine(outputDir, "ShapeDatTorrent.log");
                 File.WriteAllLines(logPath, finalLogLines);
                 Log($"[REPORT] Audit log written to: {logPath}", ConsoleColor.DarkGray);
 

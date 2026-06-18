@@ -1,14 +1,44 @@
-﻿using ShapeDatTorrent.Core.Engines;
+﻿using ShapeDatTorrent.ConsoleApp.UI.Views;
+using ShapeDatTorrent.Core.Engines;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using static System.Net.Mime.MediaTypeNames;
 
 namespace ShapeDatTorrent.ConsoleApp
 {
     internal class Program
     {
+        internal static class NativeMethods
+        {
+            [DllImport("kernel32.dll", SetLastError = true)]
+            internal static extern bool AllocConsole();
+        }
+
+
+        [STAThread]
         static void Main(string[] args)
+        {
+            if (args.Length > 0)
+            {
+                // 1. We have arguments, so we act like a Console App
+                NativeMethods.AllocConsole();
+
+                // 2. Call your existing console logic
+                RunConsoleMode(args);
+            }
+            else
+            {
+                // 3. No arguments, launch the GUI
+                System.Windows.Forms.Application.EnableVisualStyles();
+                System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+                System.Windows.Forms.Application.Run(new HomeForm());
+            }            
+        }
+
+        private static void RunConsoleMode(string[] args)
         {
             Console.Title = "ShapeDatTorrent Shell";
             Console.WriteLine("=======================================================================");
